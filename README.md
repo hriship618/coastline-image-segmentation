@@ -14,21 +14,56 @@ directly predict future sea levels. A later visualization may overlay official
 sea-level-rise scenario data, clearly labeled as scenario data rather than a
 neural-network forecast.
 
-## Build checkpoints
+## Project question
 
-1. Represent a satellite tile and pixel mask with synthetic data.
+Can a water/land segmentation model learned from Sentinel-2 imagery transfer to
+coastal regions it did not see during training? The focus is shoreline
+extraction, not a claimed prediction of future sea level.
+
+## Data and split
+
+The experiments use 98 labeled SWED Sentinel-2 GeoTIFF image/mask pairs. Each
+model receives five channels: red, green, blue, near infrared (NIR), and
+shortwave infrared (SWIR). The labels are binary: land `0` and water `1`.
+
+Examples are grouped by their Sentinel MGRS tile before splitting, so one tile
+can belong to only train, validation, or test. This avoids measuring the model
+on near-duplicate neighboring coastlines.
+
+| Split | Images | Sentinel tiles | Purpose |
+| --- | ---: | ---: | --- |
+| Train | 58 | 23 | Fit model parameters |
+| Validation | 20 | 7 | Choose the best checkpoint |
+| Test | 20 | 7 | Final, untouched evaluation |
+
+## Results
+
+All figures below are intersection-over-union (IoU), where higher is better.
+The test split was not used to select either checkpoint.
+
+| Model configuration | Test mean IoU | Test land IoU | Test water IoU |
+| --- | ---: | ---: | ---: |
+| ResNet-34 U-Net, five bands | **0.812** | 0.758 | **0.865** |
+| DINOv3-pretrained ConvNeXt-Tiny with minimal head, five bands | 0.695 | 0.627 | 0.762 |
+
+The ResNet-34 U-Net is the stronger configuration in this initial experiment.
+This does not establish that DINOv3 pretraining is worse: the ResNet setup uses
+a full U-Net decoder with skip connections, whereas the DINO experiment uses a
+deliberately small decoder. The comparison therefore measures complete model
+configurations, not pretraining alone.
+
+## Build steps
+
+1. Verify the image/mask contract with synthetic data.
 2. Load real georeferenced image/mask pairs.
-3. Train a ResNet34-UNet baseline.
-4. Train ConvNeXt-Tiny with a small segmentation head.
-5. Train DINOv3 ConvNeXt-Tiny with the same head.
-6. Evaluate on geographically held-out coastlines.
-7. Convert predicted masks into mapped shoreline vectors.
-8. Produce a simple observed-change and scenario visualization.
+3. Train a ResNet-34 U-Net baseline on real data.
+4. Train DINOv3 ConvNeXt-Tiny with a small custom segmentation head.
+5. Evaluate on geographically held-out coastlines.
+6. Convert predicted masks into mapped shoreline vectors.
+7. Produce a simple observed-change and scenario visualization.
 
-Each checkpoint will remain independently runnable and documented before the
-next one is added.
-
-## Current checkpoint: geographic training and validation
+Each notebook is independently runnable in Colab. Start with the data setup
+notebook, then run the model-specific notebooks.
 
 Before adding PyTorch or downloading a large dataset, the code defines exactly
 what one training example will contain:
@@ -79,3 +114,16 @@ package; loading occurs only when the notebook constructs this model.
 coastlines cannot leak across splits. It builds DataLoaders, trains one model for
 complete epochs, evaluates land and water IoU, saves the best validation
 checkpoint, and stops if validation performance no longer improves.
+
+## Reproducing the experiment
+
+1. Run `notebooks/01_colab_data_setup.ipynb` in Colab and opt in to the full
+   SWED download.
+2. Run the ResNet training section with `epochs=10`.
+3. Evaluate the saved checkpoint on the untouched test split.
+4. For DINOv3, use a GPU runtime, provide a Hugging Face token with access to
+   the gated weights, and repeat the same fixed geographic split.
+
+The full dataset download contains supporting files beyond the 98 labeled
+GeoTIFF pairs used by this experiment. No dataset or model checkpoint is stored
+in this repository.

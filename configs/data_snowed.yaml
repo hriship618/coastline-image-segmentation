@@ -1,0 +1,14 @@
+dataset:
+  name: snowed
+  root: /content/data/SNOWED
+  product: sample_2A.npy
+  bands: [4, 3, 2, 8, 11]
+  classes:
+    0: land
+    1: water
+
+split:
+  method: sentinel_tile
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  seed: 7

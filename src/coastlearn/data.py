@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import random
 import re
-from typing import Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -42,6 +42,7 @@ class GeographicSplits:
 
 
 _SENTINEL_TILE_PATTERN = re.compile(r"_T(?P<tile>\d{2}[A-Z]{3})_")
+_SENTINEL_TILE_BYTES_PATTERN = re.compile(rb"_T(?P<tile>\d{2}[A-Z]{3})_")
 
 
 def swed_region_id(pair: ImageMaskPair) -> str:
@@ -60,6 +61,7 @@ def split_pairs_by_region(
     validation_fraction: float = 0.2,
     test_fraction: float = 0.2,
     seed: int = 7,
+    region_id_function: Callable[[ImageMaskPair], str] = swed_region_id,
 ) -> GeographicSplits:
     """Assign entire Sentinel tiles to one split to prevent spatial leakage."""
     if not 0 < validation_fraction < 1 or not 0 < test_fraction < 1:
@@ -67,7 +69,7 @@ def split_pairs_by_region(
     if validation_fraction + test_fraction >= 1:
         raise ValueError("Validation and test fractions must sum to less than 1")
 
-    regions = sorted({swed_region_id(pair) for pair in pairs})
+    regions = sorted({region_id_function(pair) for pair in pairs})
     if len(regions) < 3:
         raise ValueError("Geographic splitting requires at least three Sentinel tiles")
 
@@ -87,7 +89,9 @@ def split_pairs_by_region(
     train_regions = set(regions) - validation_regions - test_regions
 
     def select(selected_regions: set[str]) -> tuple[ImageMaskPair, ...]:
-        return tuple(pair for pair in pairs if swed_region_id(pair) in selected_regions)
+        return tuple(
+            pair for pair in pairs if region_id_function(pair) in selected_regions
+        )
 
     return GeographicSplits(
         train=select(train_regions),
@@ -171,6 +175,82 @@ def read_swed_mask(mask_path: str | Path) -> np.ndarray:
     return normalized
 
 
+def discover_snowed_pairs(root: str | Path) -> list[ImageMaskPair]:
+    """Find SNOWED Level-2A NumPy arrays and their binary labels."""
+    root = Path(root)
+    if not root.exists():
+        raise FileNotFoundError(f"SNOWED root does not exist: {root}")
+
+    pairs = []
+    incomplete = []
+    for image_path in sorted(root.rglob("sample_2A.npy")):
+        label_path = image_path.with_name("label.npy")
+        metadata_path = image_path.with_name("metadata.pkl")
+        if not label_path.exists() or not metadata_path.exists():
+            incomplete.append(image_path.parent)
+            continue
+        pairs.append(ImageMaskPair(image_path=image_path, mask_path=label_path))
+
+    if incomplete:
+        preview = ", ".join(str(path) for path in incomplete[:3])
+        raise ValueError(f"Incomplete SNOWED samples: {preview}")
+    if not pairs:
+        raise ValueError(f"No SNOWED samples found below {root}")
+    return pairs
+
+
+def snowed_region_id(pair: ImageMaskPair) -> str:
+    """Read an MGRS tile ID from SNOWED metadata without unpickling it.
+
+    Pickle files can execute code when loaded. The Sentinel product identifier
+    is a plain string at the end of each metadata file, so a byte-pattern search
+    obtains the geographic group without deserializing the pickle.
+    """
+    metadata_path = pair.image_path.with_name("metadata.pkl")
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Missing SNOWED metadata: {metadata_path}")
+    with metadata_path.open("rb") as metadata_file:
+        metadata_file.seek(0, 2)
+        size = metadata_file.tell()
+        metadata_file.seek(max(0, size - 2048))
+        metadata_tail = metadata_file.read()
+    match = _SENTINEL_TILE_BYTES_PATTERN.search(metadata_tail)
+    if match is None:
+        raise ValueError(f"No Sentinel tile ID found in {metadata_path}")
+    return match.group("tile").decode("ascii")
+
+
+def read_snowed_image(
+    image_path: str | Path, bands: Sequence[int] = FIVE_BANDS
+) -> np.ndarray:
+    """Read a SNOWED Level-2A array as normalized ``[C,H,W]`` data."""
+    image = np.load(image_path, allow_pickle=False)
+    if image.ndim != 3:
+        raise ValueError(f"Expected a 3-D SNOWED image, got {image.shape}")
+
+    # The official archive stores arrays as [H,W,C].
+    selected = validate_band_positions(bands, image.shape[-1])
+    channel_indices = [band - 1 for band in selected]
+    image = np.moveaxis(image[..., channel_indices], -1, 0).astype(np.float32)
+    return np.clip(image / 10_000.0, 0.0, 1.0)
+
+
+def read_snowed_mask(mask_path: str | Path) -> np.ndarray:
+    """Read and orient a SNOWED mask as land ``0`` and water ``1``."""
+    mask = np.load(mask_path, allow_pickle=False)
+    if mask.ndim == 3 and mask.shape[-1] == 1:
+        mask = mask[..., 0]
+    if mask.ndim != 2:
+        raise ValueError(f"Expected a 2-D SNOWED mask, got {mask.shape}")
+
+    # SNOWED's own visualization script flips labels to align them with imagery.
+    mask = np.flipud(mask)
+    normalized = np.full(mask.shape, IGNORE_INDEX, dtype=np.int64)
+    normalized[mask == LAND_CLASS] = LAND_CLASS
+    normalized[mask == WATER_CLASS] = WATER_CLASS
+    return normalized.copy()
+
+
 class SwedDataset:
     """PyTorch-compatible dataset returning an image, mask, and source paths."""
 
@@ -193,6 +273,40 @@ class SwedDataset:
         pair = self.pairs[index]
         image = read_swed_image(pair.image_path, self.bands)
         mask = read_swed_mask(pair.mask_path)
+        if image.shape[-2:] != mask.shape:
+            raise ValueError(
+                f"Image/mask shape mismatch: {image.shape[-2:]} versus {mask.shape}"
+            )
+        return {
+            "image": torch.from_numpy(image),
+            "mask": torch.from_numpy(mask),
+            "image_path": str(pair.image_path),
+            "mask_path": str(pair.mask_path),
+        }
+
+
+class SnowedDataset:
+    """PyTorch-compatible loader for the official SNOWED archive."""
+
+    def __init__(
+        self,
+        pairs: Sequence[ImageMaskPair],
+        bands: Sequence[int] = FIVE_BANDS,
+    ) -> None:
+        if not pairs:
+            raise ValueError("SnowedDataset requires at least one image/mask pair")
+        self.pairs = list(pairs)
+        self.bands = tuple(bands)
+
+    def __len__(self) -> int:
+        return len(self.pairs)
+
+    def __getitem__(self, index: int) -> dict:
+        import torch
+
+        pair = self.pairs[index]
+        image = read_snowed_image(pair.image_path, self.bands)
+        mask = read_snowed_mask(pair.mask_path)
         if image.shape[-2:] != mask.shape:
             raise ValueError(
                 f"Image/mask shape mismatch: {image.shape[-2:]} versus {mask.shape}"
@@ -230,5 +344,36 @@ def build_dataloaders(
         ),
         "test": DataLoader(
             SwedDataset(splits.test, bands=bands), shuffle=False, **loader_options
+        ),
+    }
+
+
+def build_snowed_dataloaders(
+    splits: GeographicSplits,
+    bands: Sequence[int] = FIVE_BANDS,
+    batch_size: int = 8,
+    num_workers: int = 2,
+):
+    """Build train, validation, and test loaders for SNOWED."""
+    from torch.utils.data import DataLoader
+
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    loader_options = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "pin_memory": True,
+    }
+    return {
+        "train": DataLoader(
+            SnowedDataset(splits.train, bands=bands), shuffle=True, **loader_options
+        ),
+        "validation": DataLoader(
+            SnowedDataset(splits.validation, bands=bands),
+            shuffle=False,
+            **loader_options,
+        ),
+        "test": DataLoader(
+            SnowedDataset(splits.test, bands=bands), shuffle=False, **loader_options
         ),
     }

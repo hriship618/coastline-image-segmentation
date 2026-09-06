@@ -25,13 +25,13 @@ def build_resnet34_unet(
     if num_classes < 2:
         raise ValueError("num_classes must be at least 2")
 
-    import segmentation_models_pytorch as smp
+    from coastlearn.torch_models import TimmUNetSegmentationModel
 
-    return smp.Unet(
-        encoder_name="resnet34",
-        encoder_weights="imagenet" if pretrained else None,
+    return TimmUNetSegmentationModel(
+        backbone_name="resnet34",
         in_channels=in_channels,
-        classes=num_classes,
+        num_classes=num_classes,
+        pretrained=pretrained,
     )
 
 
@@ -40,7 +40,7 @@ def build_convnext_tiny(
     num_classes: int = 2,
     pretrained: bool = True,
 ):
-    """Build ConvNeXt-Tiny with a small convolutional segmentation head."""
+    """Build ConvNeXt-Tiny with the shared U-Net decoder."""
     if in_channels < 1:
         raise ValueError("in_channels must be positive")
     if num_classes < 2:

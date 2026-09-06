@@ -1,0 +1,16 @@
+dataset:
+  name: swed
+  # Colab location after the optional download/extraction cell runs.
+  root: /content/data/swed
+  # Rasterio uses one-based band positions. Keep the pretrained channels in
+  # RGB order, followed by Near Infrared and Shortwave Infrared 1.
+  bands: [4, 3, 2, 8, 11]
+  class_names:
+    0: land
+    1: water
+  ignore_index: 255
+
+dataloader:
+  batch_size: 8
+  num_workers: 2
+  shuffle: true

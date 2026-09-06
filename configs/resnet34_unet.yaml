@@ -1,0 +1,17 @@
+experiment:
+  name: resnet34_unet_5band_smoke_test
+
+model:
+  name: resnet34_unet
+  encoder: resnet34
+  in_channels: 5
+  num_classes: 2
+  pretrained: true
+
+training:
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  ignore_index: 255
+  epochs: 30
+

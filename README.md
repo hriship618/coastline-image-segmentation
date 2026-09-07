@@ -53,8 +53,31 @@ and produces two logits at every input pixel.
 Ordinary ConvNeXt and DINOv3 ConvNeXt have identical encoder and decoder
 structures, isolating the effect of their pretraining. ResNet uses the same
 decoder operations and widths, although its encoder feature-channel counts
-necessarily differ. Final metrics will be added only after the larger experiment
-has run.
+necessarily differ.
+
+## Results
+
+Each model was trained for 10 epochs using the same five input bands,
+geographic split, optimizer settings, and shared decoder. IoU is
+intersection-over-union; higher is better.
+
+| Encoder | SNOWED mean IoU | SNOWED land IoU | SNOWED water IoU | External SWED mean IoU |
+| --- | ---: | ---: | ---: | ---: |
+| ResNet-34 | 0.840 | 0.792 | 0.888 | **0.499** |
+| ConvNeXt-Tiny | 0.927 | 0.904 | 0.950 | 0.497 |
+| DINOv3 ConvNeXt-Tiny | **0.930** | **0.909** | **0.952** | 0.494 |
+
+DINOv3 ConvNeXt-Tiny narrowly achieved the best held-out SNOWED score. The
+0.003 mean-IoU difference from ordinary ConvNeXt is too small to support a broad
+claim from one run, but it shows that the self-supervised initialization is
+competitive under matched architecture and training conditions.
+
+All three models fell to approximately 0.50 mean IoU on the external SWED set.
+Because different backbones failed similarly, the main limitation appears to be
+cross-dataset shift rather than model capacity alone. Plausible sources include
+different label-generation methods, geographic distributions, and imagery
+processing. Improving cross-dataset transfer is a stronger next research
+question than further tuning a model only on SNOWED.
 
 ## Build steps
 

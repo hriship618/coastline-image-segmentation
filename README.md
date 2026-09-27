@@ -156,3 +156,23 @@ both held-out SNOWED tiles and the external SWED test set.
 DINOv3 weights require access to the gated Hugging Face model and an `HF_TOKEN`
 Colab secret. Datasets and model checkpoints are not committed to this
 repository.
+
+## Minimal upload interface
+
+The project includes a basic local webpage that runs one multispectral image
+through all three trained models. Install the web dependencies and provide the
+three checkpoint paths:
+
+```powershell
+python -m pip install -e ".[web]"
+$env:COASTLEARN_RESNET_CHECKPOINT = "C:\path\snowed_resnet34_unet_best.pt"
+$env:COASTLEARN_CONVNEXT_CHECKPOINT = "C:\path\snowed_convnext_tiny_best.pt"
+$env:COASTLEARN_DINO_CHECKPOINT = "C:\path\snowed_dinov3_convnext_tiny_best.pt"
+$env:HF_TOKEN = "your-hugging-face-token"
+python scripts/run_web.py
+```
+
+Open `http://127.0.0.1:5000`. The form accepts GeoTIFF or NumPy arrays with
+either the prepared five-band order (RGB, NIR, SWIR) or at least 11
+Sentinel-style bands. RGB-only JPG and PNG inputs are rejected because they do
+not contain the NIR and SWIR information used during training.

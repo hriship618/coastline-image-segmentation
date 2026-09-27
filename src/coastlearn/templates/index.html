@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoastLearn shoreline segmentation</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { margin: 0; color: #18302c; background: #f3f7f5; }
+    main { width: min(1100px, calc(100% - 32px)); margin: 48px auto; }
+    h1 { margin-bottom: 8px; }
+    p { line-height: 1.5; }
+    form, .card { background: white; border: 1px solid #d7e2de; border-radius: 10px; padding: 18px; }
+    form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 24px 0; }
+    button { border: 0; border-radius: 7px; padding: 10px 16px; color: white; background: #146b5c; cursor: pointer; }
+    button:hover { background: #0d5549; }
+    .note { color: #526863; font-size: 0.92rem; }
+    .error { color: #8b1e1e; background: #fff0f0; border: 1px solid #e8b4b4; padding: 12px; border-radius: 7px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .card h2 { font-size: 1rem; margin-top: 0; }
+    .card img { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+    .legend { display: flex; gap: 16px; margin: 16px 0; font-size: 0.9rem; }
+    .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 5px; border: 1px solid #777; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CoastLearn</h1>
+    <p>Upload one multispectral satellite image to compare shoreline segmentation from all three trained models.</p>
+
+    <form action="{{ url_for('segment') }}" method="post" enctype="multipart/form-data">
+      <input type="file" name="satellite_image" accept=".tif,.tiff,.npy" required>
+      <button type="submit">Run segmentation</button>
+    </form>
+    <p class="note">Accepted input: a 5-band RGB/NIR/SWIR array or a Sentinel-style image with at least 11 bands. RGB-only JPG and PNG files do not contain the spectral bands used during training.</p>
+
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+    {% if results %}
+      <h2>{{ filename }}</h2>
+      <div class="legend">
+        <span><i class="swatch" style="background:#c2a670"></i>Land</span>
+        <span><i class="swatch" style="background:#2d76b4"></i>Water</span>
+        <span><i class="swatch" style="background:#fff"></i>Shoreline</span>
+      </div>
+      <section class="grid">
+        <article class="card"><h2>RGB preview</h2><img src="{{ preview }}" alt="Uploaded satellite image"></article>
+        {% for result in results %}
+          <article class="card"><h2>{{ result.name }}</h2><img src="{{ result.image }}" alt="{{ result.name }} segmentation"></article>
+        {% endfor %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
